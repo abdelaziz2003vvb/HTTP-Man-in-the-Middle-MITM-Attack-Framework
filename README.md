@@ -1,235 +1,467 @@
 # HTTP Man-in-the-Middle (MITM) Attack Framework
 
-A Python-based Man-in-the-Middle attack framework for intercepting and analyzing HTTP traffic on local networks. Designed for educational and authorized penetration testing purposes.
+A Python-based Man-in-the-Middle attack framework for intercepting and analyzing HTTP traffic on local networks. Uses ARP spoofing to redirect traffic and Scapy to capture HTTP POST requests containing login credentials.
 
 ## ⚠️ Legal Disclaimer
 
-**IMPORTANT**: These tools are provided for educational purposes and authorized security testing only. Unauthorized interception of network traffic, ARP spoofing, or manipulation of network communications is illegal in most jurisdictions. Only use these tools on networks you own or have explicit written permission to test.
+**CRITICAL WARNING**: These tools are provided for educational purposes and authorized penetration testing ONLY. 
+
+Unauthorized interception of network traffic, ARP spoofing, or credential harvesting is **ILLEGAL** and punishable by:
+- Criminal prosecution under computer fraud laws (CFAA, Computer Misuse Act, etc.)
+- Heavy fines and imprisonment
+- Civil lawsuits for damages
+- Loss of professional certifications
+
+**Only use these tools on networks you own or have explicit written permission to test.**
+
+## What is This Framework?
+
+This is a complete Man-in-the-Middle attack implementation that:
+
+1. **Positions your machine** between a target device and the network gateway using ARP spoofing
+2. **Intercepts all HTTP traffic** flowing through your machine
+3. **Captures credentials** from HTTP POST requests (login forms, etc.)
+4. **Maintains the connection** by forwarding traffic transparently
+
+### Why HTTP?
+
+HTTP traffic is **unencrypted**, making credentials and data visible in plain text. This framework specifically targets:
+- Login credentials (username/password)
+- Form submissions
+- User data in POST requests
+- Any information sent over HTTP
+
+**Note**: HTTPS traffic is encrypted end-to-end and cannot be read with this basic setup. However, many IoT devices, legacy systems, and internal applications still use HTTP.
 
 ## Tools Included
 
 ### 1. ARP Spoofer (`spoofer.py`)
-Performs ARP spoofing to position your machine as a man-in-the-middle between a target and the network gateway, intercepting all traffic flowing between them.
+**Purpose**: Poisons the ARP cache of both the target and gateway to redirect traffic through your machine.
 
-### 2. Network Packet Sniffer (`sniffer.py`)
-Captures and analyzes HTTP traffic passing through your machine, extracting URLs, form data, and potential credentials from unencrypted HTTP requests.
+**How it works**:
+- Sends forged ARP replies every 2 seconds
+- Tells the victim: "I am the router"
+- Tells the router: "I am the victim"
+- Automatically restores ARP tables on exit
 
-## What is a Man-in-the-Middle Attack?
+**Key Features**:
+- MAC address resolution for target and gateway
+- Continuous ARP poisoning with packet counting
+- Graceful network restoration with Ctrl+C
+- Non-flooding design (2-second intervals)
 
-A Man-in-the-Middle (MITM) attack intercepts communication between two parties without their knowledge. This framework uses:
+### 2. HTTP Packet Sniffer (`sniffer.py`)
+**Purpose**: Captures and analyzes HTTP POST requests to extract login credentials.
 
-1. **ARP Spoofing**: Tricks the target device and router into sending their traffic through your machine
-2. **Packet Sniffing**: Captures and analyzes the redirected traffic, particularly HTTP requests
-3. **Traffic Forwarding**: Passes traffic between parties so the attack remains undetected
+**What it captures**:
+- Full URLs (host + path) from HTTP requests
+- POST request data containing keywords like:
+  - username, user, login
+  - password, pass
+  - uname
+- Raw payload data from suspicious requests
 
-### Why HTTP?
+**Key Features**:
+- Filters specifically for HTTP POST requests
+- Keyword detection for credential fields
+- Error handling for malformed packets
+- Real-time display of captured credentials
 
-HTTP traffic is **unencrypted**, making it vulnerable to interception. This framework can capture:
-- Login credentials sent over HTTP
-- Form submissions and POST data
-- Cookies and session tokens
-- Browsing history and URLs visited
-- Any data transmitted without HTTPS encryption
+## Attack Flow Diagram
 
-**Note**: HTTPS traffic is encrypted and cannot be easily read with this basic MITM setup. Modern websites use HTTPS, making this attack less effective than in the past, but many IoT devices, internal tools, and legacy systems still use HTTP.
+```
+Normal Network Flow:
+┌─────────────┐         ┌─────────┐         ┌──────────┐
+│   Target    │ ◄─────► │  Router │ ◄─────► │ Internet │
+│  (Victim)   │         │(Gateway)│         │          │
+└─────────────┘         └─────────┘         └──────────┘
+
+MITM Attack Flow:
+┌─────────────┐         ┌──────────────┐         ┌─────────┐         ┌──────────┐
+│   Target    │ ◄─────► │ Your Machine │ ◄─────► │  Router │ ◄─────► │ Internet │
+│  (Victim)   │         │  (Attacker)  │         │(Gateway)│         │          │
+└─────────────┘         └──────────────┘         └─────────┘         └──────────┘
+                         ↓ Intercepts &
+                         ↓ Analyzes HTTP
+                         ↓ POST Requests
+```
 
 ## Prerequisites
 
 ### System Requirements
-- Linux-based operating system (Ubuntu, Kali Linux, etc.)
+- Linux-based OS (Kali Linux, Ubuntu, Parrot OS)
 - Python 3.x
 - Root/sudo privileges
+- Network interface in same subnet as target
 
 ### Python Dependencies
 ```bash
 pip install scapy
+# or
+pip install scapy-python3
 ```
 
-## Setup
+### Verify Network Interface
+Check your network interface name:
+```bash
+ip a
+# or
+ifconfig
+```
 
-### Enable IP Forwarding
-Before using the ARP spoofer, you need to enable IP forwarding to allow traffic to flow through your machine:
+Common interface names: `eth0`, `wlan0`, `ens33`, `wlp2s0`
+
+## Setup & Configuration
+
+### 1. Configure Target IPs
+
+Edit `spoofer.py` and set these variables:
+
+```python
+VICTIM_IP = "192.168.100.26"    # Target machine IP
+GATEWAY_IP = "192.168.100.1"    # Router IP (usually .1 or .254)
+```
+
+**How to find these IPs**:
+
+On the target machine (Windows):
+```cmd
+ipconfig
+```
+
+On Linux target:
+```bash
+ip route | grep default
+```
+
+Your gateway is typically the first or last IP in your subnet (e.g., 192.168.1.1, 192.168.0.254).
+
+### 2. Configure Network Interface
+
+Edit `sniffer.py` and set your interface:
+
+```python
+sniff_packets("eth0")  # Change to your interface name
+```
+
+### 3. Enable IP Forwarding
+
+**CRITICAL**: Without this, the target will lose internet connectivity and the attack will be obvious.
 
 ```bash
 echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward
 ```
 
-To make this permanent across reboots, edit `/etc/sysctl.conf`:
+Verify it's enabled:
+```bash
+cat /proc/sys/net/ipv4/ip_forward
+# Should return: 1
+```
+
+To make permanent (optional):
 ```bash
 sudo nano /etc/sysctl.conf
-```
-
-Add or uncomment the following line:
-```
-net.ipv4.ip_forward=1
-```
-
-Then apply the changes:
-```bash
+# Add: net.ipv4.ip_forward=1
 sudo sysctl -p
 ```
 
-### Disable IP Forwarding (After Testing)
-```bash
-echo 0 | sudo tee /proc/sys/net/ipv4/ip_forward
-```
+## Complete Attack Workflow
 
-## Usage
-
-## Complete MITM Attack Workflow
-
-### 1. Enable IP Forwarding
+### Step 1: Enable IP Forwarding
 ```bash
 echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward
 ```
 
-### 2. Start ARP Spoofing
-In one terminal:
+### Step 2: Start ARP Spoofing
+Open first terminal:
 ```bash
 sudo python3 spoofer.py
-Target IP: 192.168.1.100      # Victim's IP
-Gateway IP: 192.168.1.1        # Router's IP
 ```
 
-### 3. Start Packet Sniffing
-In another terminal:
+You should see:
+```
+[*] Lancement de l'attaque ARP Spoofing...
+[+] Paquets envoyés: 2
+[+] Paquets envoyés: 4
+[+] Paquets envoyés: 6
+...
+```
+
+### Step 3: Start Packet Sniffing
+Open second terminal:
 ```bash
 sudo python3 sniffer.py
 ```
 
-### 4. Monitor Intercepted Traffic
-The sniffer will display:
-- HTTP requests and URLs visited
-- Form submissions (usernames, passwords, search queries)
-- Cookies and authentication tokens
-- Any unencrypted data
+You should see:
+```
+[*] Sniffer en écoute sur eth0...
+```
 
-### 5. Stop the Attack
-- Press `Ctrl+C` in both terminals
-- The spoofer will automatically restore ARP tables
-- Disable IP forwarding:
+### Step 4: Wait for HTTP POST Requests
+
+When the victim submits a login form over HTTP, you'll see:
+
+```
+------------------------------
+[!!!] POTENTIEL MOT DE PASSE TROUVÉ !
+URL: example.com/login
+DONNÉES: username=admin&password=secret123
+------------------------------
+```
+
+### Step 5: Stop the Attack
+
+Press `Ctrl+C` in the spoofer terminal first. It will automatically restore the network:
+```
+[!] Arrêt de l'attaque. Restauration du réseau...
+[+] Réseau restauré.
+```
+
+Then stop the sniffer with `Ctrl+C`.
+
+### Step 6: Disable IP Forwarding
 ```bash
 echo 0 | sudo tee /proc/sys/net/ipv4/ip_forward
 ```
 
-## How the MITM Attack Works
+## Understanding the Code
 
-### Step-by-Step Attack Flow
+### ARP Spoofing Process
 
-1. **Enable IP Forwarding**: Your machine becomes a router, allowing traffic to pass through
-2. **ARP Spoofing**: 
-   - Tell the target: "I'm the gateway, send your traffic to me"
-   - Tell the gateway: "I'm the target, send their traffic to me"
-3. **Traffic Interception**: All traffic between target and internet flows through your machine
-4. **Packet Analysis**: HTTP traffic is captured and analyzed in real-time
-5. **Transparent Forwarding**: Traffic is forwarded to its intended destination, keeping the connection alive
-
-### Visual Representation
-
-```
-Normal Traffic Flow:
-Target Device ←→ Router ←→ Internet
-
-MITM Attack Flow:
-Target Device ←→ YOUR MACHINE ←→ Router ←→ Internet
-                 (Intercepting & Analyzing)
+```python
+def spoof(target_ip, spoof_ip):
+    # Gets target's MAC address
+    target_mac = get_mac(target_ip)
+    # Creates ARP reply (op=2) claiming to be spoof_ip
+    packet = ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=spoof_ip)
+    send(packet, verbose=False)
 ```
 
-### ARP Spoofing Technical Details
-- The spoofer sends forged ARP replies to both the target and gateway
-- ARP tables are poisoned to redirect traffic through your machine
-- Both parties' ARP tables are restored when the script exits gracefully
+**What happens**:
+1. Resolves target's MAC address
+2. Creates ARP reply packet
+3. Claims your machine has the IP of the spoof_ip
+4. Sent to target's MAC address
 
-### Packet Sniffing Technical Details
-- Uses Scapy to capture packets on the network interface
-- Filters for HTTP traffic (port 80)
-- Extracts URLs, host headers, and POST data
-- Displays potential credentials and sensitive information
+### HTTP POST Detection
 
-## Common Use Cases
+```python
+if packet[HTTPRequest].Method == b"POST":
+    url = get_url(packet)
+    login_info = get_login_info(packet)
+```
 
-- **Security Audits**: Testing if employees are using HTTP on sensitive sites
-- **Penetration Testing**: Authorized assessment of network security (with written permission)
-- **Educational Demonstrations**: Teaching network security concepts
-- **Network Analysis**: Understanding how HTTP traffic flows
-- **Vulnerability Assessment**: Identifying devices using insecure protocols
-
-## Real-World Scenarios
-
-### Scenario 1: Coffee Shop Attack
-An attacker positions themselves between victims and the coffee shop's WiFi router, capturing login credentials from users accessing HTTP sites.
-
-### Scenario 2: Corporate Network Testing
-A security professional tests if employees are transmitting sensitive data over HTTP instead of HTTPS.
-
-### Scenario 3: IoT Device Security
-Testing smart home devices that communicate using unencrypted HTTP APIs.
+**What it does**:
+1. Filters for HTTP POST requests only (where credentials are sent)
+2. Extracts the full URL
+3. Searches payload for keywords: username, password, login, pass, user, uname
+4. Displays captured data if keywords found
 
 ## Troubleshooting
 
-### Permission Denied
-- Ensure you're running the scripts with `sudo`
-- Check that your user has the necessary privileges
+### "Permission denied" Error
+**Solution**: Run with sudo
+```bash
+sudo python3 spoofer.py
+sudo python3 sniffer.py
+```
+
+### "Impossible de trouver l'adresse MAC"
+**Causes**:
+- Wrong IP address
+- Target is offline
+- Not on same subnet
+- Firewall blocking ARP
+
+**Solution**: 
+```bash
+# Verify target is reachable
+ping 192.168.100.26
+
+# Verify gateway
+ip route | grep default
+```
 
 ### No Packets Captured
-- Verify your network interface is active
-- Check if you're on the correct network
-- Ensure no firewall is blocking the traffic
+**Causes**:
+- Wrong network interface in sniffer.py
+- IP forwarding not enabled
+- Target not using HTTP (only HTTPS)
 
-### ARP Spoofing Not Working
-- Confirm IP forwarding is enabled: `cat /proc/sys/net/ipv4/ip_forward` (should return 1)
-- Verify target and gateway IPs are correct
-- Check that both hosts are on the same subnet
+**Solution**:
+```bash
+# Check interface
+ip a
 
-## Stopping the Tools
+# Verify forwarding
+cat /proc/sys/net/ipv4/ip_forward
 
-Press `Ctrl+C` to gracefully stop either tool. The ARP spoofer will automatically restore the ARP tables of affected machines.
+# Test with HTTP site (not HTTPS)
+# On target, visit: http://testphp.vulnweb.com
+```
 
-## Security Considerations
+### Target Loses Internet
+**Cause**: IP forwarding is disabled
 
-### For Attackers (Authorized Testers)
-1. **Authorization**: Always obtain written permission before testing
-2. **Scope**: Only target systems within the authorized scope
-3. **Data Handling**: Securely handle any captured credentials
-4. **Reporting**: Document findings professionally
-5. **Cleanup**: Restore network state after testing
+**Solution**:
+```bash
+echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward
+```
 
-### For Defenders
-Protect against MITM attacks by:
-- **Use HTTPS Everywhere**: Encrypt all web traffic
-- **HSTS (HTTP Strict Transport Security)**: Force HTTPS connections
-- **Certificate Pinning**: Detect fraudulent certificates
-- **ARP Spoofing Detection**: Use tools like arpwatch or XArp
-- **Network Segmentation**: Isolate sensitive systems
-- **Static ARP Entries**: Prevent ARP cache poisoning on critical hosts
+### Only Seeing GET Requests
+**Expected**: The sniffer only displays POST requests (where credentials are sent). GET requests are ignored by design.
 
-### Detection Indicators
-Network defenders can detect this attack through:
-- Duplicate MAC addresses in ARP tables
-- Increased ARP traffic on the network
-- Gateway MAC address changes
-- Network latency increases
-- IDS/IPS alerts for ARP spoofing
+## Detection & Defense
 
-### Legal Consequences
-- **Unauthorized Use**: Criminal charges under computer fraud laws (CFAA in US, Computer Misuse Act in UK)
-- **Civil Liability**: Lawsuits for damages and privacy violations
-- **Professional Consequences**: Loss of certifications and employment
+### How to Detect This Attack
 
-## Learning Resources
+**On Target Machine**:
+```bash
+# Check ARP table for duplicate IPs
+arp -a
+# Look for same MAC address with different IPs
+```
 
-- [Scapy Documentation](https://scapy.readthedocs.io/)
-- [ARP Protocol (RFC 826)](https://www.ietf.org/rfc/rfc826.txt)
-- [Network Security Fundamentals](https://www.sans.org/)
+**On Network**:
+- Use ARP spoofing detection tools: `arpwatch`, `XArp`
+- Monitor for excessive ARP traffic
+- IDS/IPS alerts (Snort, Suricata)
+- Sudden increase in network latency
+
+### How to Defend Against This Attack
+
+**For Users**:
+1. **Use HTTPS everywhere** - Forces encrypted connections
+2. **VPN** - Encrypts all traffic at network layer
+3. **HSTS** - HTTP Strict Transport Security
+4. **Static ARP entries** - Prevents ARP cache poisoning (on critical machines)
+
+**For Network Administrators**:
+1. **Port security** - Limit MAC addresses per switch port
+2. **Dynamic ARP Inspection (DAI)** - Validates ARP packets
+3. **DHCP Snooping** - Prevents DHCP-based attacks
+4. **Network segmentation** - Isolate sensitive systems
+5. **802.1X authentication** - Authenticates devices before network access
+
+## Common Target Scenarios
+
+### Scenario 1: Public WiFi Attack
+- **Location**: Coffee shop, airport, hotel
+- **Target**: Users on same network
+- **Risk**: High (many HTTP sites, careless users)
+
+### Scenario 2: Corporate Network Testing
+- **Location**: Internal company network
+- **Target**: Employees, internal systems
+- **Risk**: Medium (testing for insecure internal apps)
+
+### Scenario 3: IoT Device Analysis
+- **Location**: Home network
+- **Target**: Smart devices, IP cameras
+- **Risk**: High (many IoT devices use HTTP)
+
+### Scenario 4: Legacy System Assessment
+- **Location**: Industrial networks
+- **Target**: Old web interfaces, SCADA systems
+- **Risk**: Critical (often no encryption)
+
+## Limitations
+
+### What This Tool CANNOT Do:
+- ✗ Decrypt HTTPS traffic (requires SSL stripping/certificate attacks)
+- ✗ Capture traffic outside your subnet
+- ✗ Work on switched networks with port security enabled
+- ✗ Bypass VPN encryption
+- ✗ Defeat static ARP entries
+- ✗ Work on networks with DAI enabled
+
+### What This Tool CAN Do:
+- ✓ Capture HTTP POST credentials
+- ✓ Intercept unencrypted traffic
+- ✓ Demonstrate ARP spoofing vulnerabilities
+- ✓ Test network security posture
+- ✓ Capture IoT device communications
+
+## Legal & Ethical Considerations
+
+### When This is LEGAL:
+- ✓ Your own network and devices
+- ✓ Authorized penetration testing with written contract
+- ✓ Security research in isolated lab environment
+- ✓ Educational purposes in controlled environment (university lab)
+
+### When This is ILLEGAL:
+- ✗ Public WiFi networks without authorization
+- ✗ Corporate networks without explicit permission
+- ✗ Any network you don't own or have permission to test
+- ✗ "Just testing" on neighbors/friends without written consent
+
+### Consequences of Illegal Use:
+- **Criminal charges**: Computer fraud, unauthorized access, wiretapping
+- **Fines**: $10,000 - $250,000+ depending on jurisdiction
+- **Imprisonment**: 1-20 years depending on severity and location
+- **Civil lawsuits**: Victims can sue for damages
+- **Career destruction**: Permanent criminal record, loss of certifications
+
+## Testing in Safe Environment
+
+### Setup a Test Lab:
+1. Use virtual machines (VirtualBox, VMware)
+2. Create isolated network (host-only or NAT)
+3. Set up vulnerable web app (DVWA, WebGoat)
+4. Test VM as target
+5. Kali Linux VM as attacker
+
+### Test Environment Configuration:
+```
+┌─────────────────┐         ┌──────────────────┐
+│  Kali Linux VM  │         │  Windows/Ubuntu  │
+│   (Attacker)    │ ◄─────► │     VM (Target)  │
+│  192.168.56.10  │         │  192.168.56.20   │
+└─────────────────┘         └──────────────────┘
+         │                           │
+         └───────────┬───────────────┘
+               Host-Only Network
+              192.168.56.0/24
+```
+
+## Additional Resources
+
+### Learn More About:
+- **Scapy Documentation**: https://scapy.readthedocs.io/
+- **ARP Protocol (RFC 826)**: https://www.ietf.org/rfc/rfc826.txt
+- **MITM Attacks**: OWASP Man-in-the-Middle Guide
+- **Network Security**: CEH, OSCP, Network+ certifications
+
+### Practice Legally:
+- **HackTheBox**: Legal penetration testing labs
+- **TryHackMe**: Guided security learning
+- **PentesterLab**: Web app security exercises
+- **DVWA**: Damn Vulnerable Web Application
 
 ## Contributing
 
-This project is for educational purposes. If you find bugs or have improvements, please ensure all contributions maintain the ethical use guidelines.
+This project is for educational purposes. Contributions should:
+- Maintain ethical use guidelines
+- Improve detection evasion for learning
+- Add defensive techniques
+- Enhance documentation
+
+## Author Notes
+
+This framework demonstrates a fundamental network attack that has existed for decades. While modern networks have defenses, many environments remain vulnerable. Understanding this attack is crucial for:
+- Security professionals
+- Network administrators
+- Developers building secure applications
+- Anyone wanting to understand network security
+
+**Remember**: The goal is to learn security, not to harm others. Use responsibly.
 
 ## License
 
-Use responsibly and ethically. The authors assume no liability for misuse of these tools.
+Educational use only. The authors assume no liability for misuse of these tools.
 
 ---
 
-**Remember**: With great power comes great responsibility. Use these tools ethically and legally.
+**Final Warning**: With great power comes great responsibility. This tool can cause real harm. Use it ethically, legally, and only in authorized environments. When in doubt, DON'T.
